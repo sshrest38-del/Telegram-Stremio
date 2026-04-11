@@ -1,1 +1,1 @@
-uv run update.py && uv run -m Backend
+python update.py && python -m Backend
