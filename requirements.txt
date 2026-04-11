@@ -9,4 +9,7 @@ pytz
 tgcrypto
 themoviedb
 uvicorn
-uv
+itsdangerous
+jinja2
+python-multipart
+starlette==0.52.1
