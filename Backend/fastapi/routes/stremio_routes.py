@@ -509,7 +509,6 @@ async def get_streams(
                 {
                     "name": "🚫 Subscription Expired",
                     "title": "Your subscription has expired.\nRenew via the bot to continue watching.",
-                    "description": "Click to renew your subscription",
                     "externalUrl": _TG.SUBSCRIPTION_URL
                 }
             ]
