@@ -1,5 +1,5 @@
 from pyrogram import Client, filters
-from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 from Backend.config import Telegram
 from Backend import db
 from datetime import datetime, timedelta
@@ -55,31 +55,48 @@ async def plan_selection(client: Client, callback_query: CallbackQuery):
     # Set pending payment state (price stored for admin display)
     await db.set_pending_payment(user_id, int(duration), 0, price=plan.get("price", 0))
 
-    # Always try to DM the user directly so the screenshot handler (filters.private) picks it up
+    qr_code_path = "image/QRCODE.jpg"
     dm_sent = False
-    from pyrogram.types import ForceReply
 
-    # Always try to DM the user directly so the screenshot handler (filters.private) picks it up
-    dm_sent = False
     try:
-        await client.send_message(
+        # Try sending QR code in DM
+        await client.send_photo(
             chat_id=user_id,
-            text=text,
+            photo=qr_code_path,
+            caption=text,
             reply_markup=ForceReply(selective=True),
         )
         dm_sent = True
-    except Exception as e:
-        print(f"Could not DM user {user_id}: {e}")
+    except Exception:
+        try:
+            # Fallback to just text message if photo fails
+            await client.send_message(
+                chat_id=user_id,
+                text=text,
+                reply_markup=ForceReply(selective=True),
+            )
+            dm_sent = True
+        except Exception as e:
+            print(f"Could not DM user {user_id}: {e}")
 
     if dm_sent:
         await callback_query.answer("✅ Check your DM for payment instructions!", show_alert=True)
     else:
         # Fallback: reply in current chat if DM fails (user hasn't started bot)
-        await callback_query.message.reply_text(
-            text + "\n\n⚠️ <i>Please start a DM with the bot first by clicking its username, then send your screenshot there.</i>",
-            reply_markup=ForceReply(selective=True),
-            quote=True,
-        )
+        fallback_text = text + "\n\n⚠️ <i>Please start a DM with the bot first by clicking its username, then send your screenshot there.</i>"
+        try:
+            await callback_query.message.reply_photo(
+                photo=qr_code_path,
+                caption=fallback_text,
+                reply_markup=ForceReply(selective=True),
+                quote=True,
+            )
+        except Exception:
+            await callback_query.message.reply_text(
+                text=fallback_text,
+                reply_markup=ForceReply(selective=True),
+                quote=True,
+            )
         await callback_query.answer()
 
 
@@ -103,7 +120,7 @@ async def handle_payment_screenshot(client: Client, message: Message):
             print(f"DEBUG: No pending_payment found for {sender_id}")
             await message.reply_text(
                 "ℹ️ We received your photo, but you don't have an active payment request.\n\n"
-                "Please use /start to select a subscription plan first, then send your payment screenshot.",
+                "Please use /start to select a subscription plan first, then send your payment screenshot. Make sure you shared correct details",
                 quote=True
             )
             return
