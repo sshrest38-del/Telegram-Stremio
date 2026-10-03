@@ -5,7 +5,7 @@
   "compatibility_date": "2025-02-01",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "BACKEND_URL": "https://your-telegram-stremio.example.com",
+    "BACKEND_URL": "https://p01--telegram-stremio--czrdx5625lgp.code.run",
     "STREAM_MODE": "origin",
     "CF_CACHE_CHUNKS": "false",
     "PROTOCOL_VERSION": "1"
