@@ -1043,6 +1043,12 @@ document.addEventListener('DOMContentLoaded', sessLoadStatus);
                 <option value="both" {% if settings.cf_stream_mode == "both" %}selected{% endif %}>Both — Cloudflare and direct</option>
             </select>
         </div>
+        <div style="margin-top:1.25rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+            <button type="button" id="btn-test-cf" class="add-btn" style="background:var(--primary);cursor:pointer;border:none;padding:0.5rem 1rem;border-radius:8px;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:0.5rem" onclick="testCloudflareConnection()">
+                <i class="fa-solid fa-satellite-dish"></i> Test Connection
+            </button>
+            <div id="cf-test-result" style="display:none;font-size:0.85rem;padding:0.4rem 0.8rem;border-radius:6px;border:1px solid transparent"></div>
+        </div>
     </div>
     
     <!-- ── WebDAV ──────────────────────────────────────────────────────── -->
@@ -1896,6 +1902,62 @@ async function restartApp() {
             msg.textContent = 'Server offline — waiting for it to come back…';
         }
     }, 2000);
+}
+
+async function testCloudflareConnection() {
+    const btn = document.getElementById('btn-test-cf');
+    const resultBox = document.getElementById('cf-test-result');
+    const url = document.getElementById('cf_stream_url').value.trim();
+    const secret = document.getElementById('cf_stream_secret').value.trim();
+
+    if (!url) {
+        showToast('Please enter a Worker URL first.', 'error', 'Missing URL');
+        return;
+    }
+
+    spinIcon(btn, true);
+    resultBox.style.display = 'inline-block';
+    resultBox.style.background = 'rgba(255, 255, 255, 0.05)';
+    resultBox.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+    resultBox.style.color = 'var(--text-sec)';
+    resultBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing connection to Worker...';
+
+    try {
+        const res = await fetch('/api/admin/cf/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, secret })
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            resultBox.style.background = 'rgba(34, 197, 94, 0.15)';
+            resultBox.style.borderColor = 'rgba(34, 197, 94, 0.3)';
+            resultBox.style.color = '#4ade80';
+            resultBox.innerHTML = `<i class="fa-solid fa-circle-check"></i> <strong>Connected!</strong> Latency: ${data.latency_ms}ms · Protocol: v${data.protocol} · Auth: Verified`;
+            showToast('Worker connection verified successfully!', 'success', 'Cloudflare Worker');
+        } else if (data.reachable) {
+            resultBox.style.background = 'rgba(234, 179, 8, 0.15)';
+            resultBox.style.borderColor = 'rgba(234, 179, 8, 0.3)';
+            resultBox.style.color = '#fde047';
+            resultBox.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Reachable (${data.latency_ms}ms) but auth issue: ${escapeHtml(data.message)}`;
+            showToast(data.message, 'warning', 'Auth Warning');
+        } else {
+            resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
+            resultBox.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+            resultBox.style.color = '#f87171';
+            resultBox.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> ${escapeHtml(data.message || 'Worker unreachable')}`;
+            showToast(data.message || 'Worker unreachable', 'error', 'Connection Failed');
+        }
+    } catch (err) {
+        resultBox.style.background = 'rgba(239, 68, 68, 0.15)';
+        resultBox.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+        resultBox.style.color = '#f87171';
+        resultBox.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> Network error testing connection`;
+        showToast('Network error while testing Worker', 'error', 'Error');
+    } finally {
+        spinIcon(btn, false);
+    }
 }
 
 /* Run after DOMContentLoaded so base.html helpers (showToast) are defined —

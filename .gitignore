@@ -10,4 +10,9 @@ log.txt
 /.vscode/
 test.py
 config.env
+*.env
 *.pyc
+node_modules/
+.dev.vars
+.wrangler/
+dist/

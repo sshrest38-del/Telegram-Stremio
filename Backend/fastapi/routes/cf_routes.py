@@ -1,12 +1,15 @@
 import json
+import time
 
-from fastapi import APIRouter, HTTPException, Request
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from Backend import db
 from Backend.config import Telegram
+from Backend.fastapi.security.credentials import require_auth
 from Backend.helper.analytics import record_stream_start
 from Backend.helper.cf_live import apply_report
-from Backend.helper.cf_stream import verify_worker_request
+from Backend.helper.cf_stream import _hmac, verify_worker_request
 from Backend.helper.session_auth import get_active_session_string
 from Backend.helper.settings_manager import SettingsManager
 from Backend.logger import LOGGER
@@ -69,3 +72,87 @@ async def cf_usage(request: Request):
         except Exception as e:
             LOGGER.error(f"[CF] Live stream report failed: {e}")
     return {"ok": True}
+
+
+#----- Diagnostics & connection tester for Settings WebUI
+@router.post("/api/admin/cf/test-connection")
+async def test_cf_connection(request: Request, _: bool = Depends(require_auth)):
+    payload = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+
+    url = (payload.get("url") or SettingsManager.current().cf_stream_url or "").rstrip("/")
+    secret = (payload.get("secret") or SettingsManager.current().cf_stream_secret or "").strip()
+
+    if not url:
+        return {"ok": False, "reachable": False, "message": "Worker URL is required."}
+
+    start_time = time.perf_counter()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # Step 1: Health probe
+        try:
+            health_res = await client.get(f"{url}/health")
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 1)
+        except Exception as e:
+            return {
+                "ok": False,
+                "reachable": False,
+                "latency_ms": None,
+                "message": f"Worker unreachable at {url}: {e}",
+            }
+
+        if health_res.status_code != 200:
+            return {
+                "ok": False,
+                "reachable": True,
+                "latency_ms": latency_ms,
+                "message": f"Worker returned HTTP {health_res.status_code} on /health",
+            }
+
+        try:
+            info = health_res.json()
+        except Exception:
+            info = {}
+
+        protocol = info.get("protocol", 1)
+        service = info.get("service", "unknown")
+
+        # Step 2: Auth probe (POST /api/sync challenge with secret)
+        auth_valid = False
+        auth_message = "Secret not provided"
+        if secret:
+            ts = str(int(time.time()))
+            body = "{}"
+            sig = _hmac(secret, f"{ts}\nPOST /api/sync\n{body}")
+            headers = {
+                "x-cf-time": ts,
+                "x-cf-sig": sig,
+                "content-type": "application/json",
+            }
+            try:
+                sync_res = await client.post(f"{url}/api/sync", content=body, headers=headers)
+                if sync_res.status_code == 200:
+                    auth_valid = True
+                    auth_message = "Secret verified"
+                elif sync_res.status_code == 401:
+                    auth_valid = False
+                    auth_message = "Secret rejected (401 Bad Signature)"
+                else:
+                    auth_message = f"Auth check returned HTTP {sync_res.status_code}"
+            except Exception as e:
+                auth_message = f"Auth probe error: {e}"
+
+        return {
+            "ok": True if (auth_valid or not secret) else False,
+            "reachable": True,
+            "latency_ms": latency_ms,
+            "service": service,
+            "protocol": protocol,
+            "auth_valid": auth_valid,
+            "message": "Connected successfully! Worker is reachable and shared secret is verified."
+            if auth_valid
+            else f"Reachable ({latency_ms}ms), {auth_message}",
+        }
+

@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "telegram-stremio-streaming-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-02-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "BACKEND_URL": "https://your-telegram-stremio.example.com",
+    "STREAM_MODE": "origin",
+    "CF_CACHE_CHUNKS": "false",
+    "PROTOCOL_VERSION": "1"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
