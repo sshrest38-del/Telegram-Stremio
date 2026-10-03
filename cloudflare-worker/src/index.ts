@@ -164,13 +164,24 @@ export default {
         }
         upstreamHeaders.set("User-Agent", userAgent || "Telegram-Stremio-Worker");
         upstreamHeaders.set("Accept", "*/*");
+        // Strictly prevent gzip/brotli compression on media streams to avoid latency/buffering
+        upstreamHeaders.set("Accept-Encoding", "identity");
 
         // Forward request with cancellation propagation via request.signal
-        const upstreamRes = await fetch(upstreamUrl, {
+        const fetchInit: RequestInit & { cf?: any } = {
           method: request.method,
           headers: upstreamHeaders,
           signal: request.signal,
-        });
+        };
+
+        if (env.CF_CACHE_CHUNKS === "true") {
+          fetchInit.cf = {
+            cacheEverything: true,
+            cacheTtl: 86400,
+          };
+        }
+
+        const upstreamRes = await fetch(upstreamUrl, fetchInit);
 
         // Handle upstream errors cleanly
         if (!upstreamRes.ok && upstreamRes.status !== 206) {
@@ -217,9 +228,11 @@ export default {
           "Access-Control-Expose-Headers",
           "Content-Length, Content-Range, Accept-Ranges, Content-Disposition"
         );
+        // Explicitly disable proxy buffering and transcoding for real-time video delivery
+        responseHeaders.set("X-Accel-Buffering", "no");
         responseHeaders.set(
           "Cache-Control",
-          env.CF_CACHE_CHUNKS === "true" ? "public, max-age=86400" : "public, max-age=3600"
+          env.CF_CACHE_CHUNKS === "true" ? "public, max-age=86400, no-transform" : "public, max-age=3600, no-transform"
         );
 
         if (request.method === "HEAD") {
@@ -229,37 +242,21 @@ export default {
           });
         }
 
-        // Stream body with zero-copy and chunk-counting TransformStream
+        // Track usage from headers (O(1), zero CPU overhead, pure native wire-speed passthrough)
         const streamId = crypto.randomUUID();
         const memberId = env.WORKER_MEMBER_ID || request.headers.get("cf-ray") || "worker-node";
+        const contentLengthHeader = upstreamRes.headers.get("Content-Length");
+        const transferredBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
 
-        let transferredBytes = 0;
-        const countingStream = new TransformStream({
-          transform(chunk, controller) {
-            transferredBytes += chunk.byteLength;
-            usageManager.recordBytes(streamId, token, chunk.byteLength, metadata);
-            controller.enqueue(chunk);
-          },
-          flush() {
-            usageManager.finishStream(streamId);
+        if (transferredBytes > 0) {
+          usageManager.recordBytes(streamId, token, transferredBytes, metadata);
+          if (usageManager.shouldFlush()) {
             ctx.waitUntil(usageManager.flush(backendBase, env.SHARED_SECRET, memberId));
-          },
-        });
-
-        // Trigger background usage flush if threshold is met
-        if (usageManager.shouldFlush()) {
-          ctx.waitUntil(usageManager.flush(backendBase, env.SHARED_SECRET, memberId));
+          }
         }
 
-        if (!upstreamRes.body) {
-          return new Response(null, {
-            status: upstreamRes.status,
-            headers: responseHeaders,
-          });
-        }
-
-        const pipedBody = upstreamRes.body.pipeThrough(countingStream);
-        return new Response(pipedBody, {
+        // Pass native body stream directly to client without JS event-loop chunk throttling
+        return new Response(upstreamRes.body, {
           status: upstreamRes.status,
           headers: responseHeaders,
         });

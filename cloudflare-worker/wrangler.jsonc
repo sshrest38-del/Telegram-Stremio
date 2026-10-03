@@ -7,7 +7,7 @@
   "vars": {
     "BACKEND_URL": "https://p01--telegram-stremio--czrdx5625lgp.code.run",
     "STREAM_MODE": "origin",
-    "CF_CACHE_CHUNKS": "false",
+    "CF_CACHE_CHUNKS": "true",
     "PROTOCOL_VERSION": "1"
   },
   "observability": {
